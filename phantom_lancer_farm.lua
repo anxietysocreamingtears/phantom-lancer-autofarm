@@ -11,6 +11,15 @@ local minHP = g:Slider("Отход при HP, %", 10, 70, 35)
 local dangerRadius = g:Slider("Радиус опасности", 600, 2500, 1400)
 local routeRadius = g:Slider("Радиус от точки запуска", 1500, 10000, 5000)
 local ancients = g:Switch("Древние", false)
+local scout = g:Switch("Проверять лагеря без обзора", true)
+local debug = g:Switch("Причина ожидания в консоли", true)
+local lastStatus
+local function status(text)
+    if text~=lastStatus then
+        lastStatus=text
+        if debug:Get() then Log.Write("[PL Farm] "..text) end
+    end
+end
 local autoRegen = g:Switch("Покупать и использовать Flask / Clarity", true)
 local s
 local function reset()
@@ -187,6 +196,7 @@ function script.OnUpdate()
     if now<0 or now<s.next then return end
     s.next = now+0.25
     if not enable:Get() or not bind:IsToggled() then
+        status(not enable:Get() and "Выключен в меню" or "Ожидание клавиши автофарма: включите бинд")
         if s.swap then restore(h,now) else reset() end
         return
     end
@@ -232,8 +242,9 @@ function script.OnUpdate()
     end
     if hp<=minHP:Get() then s.retreat=true end
     if hp>=90 then s.retreat=false end
-    if busy and safe(p(h)) then return end
+    if busy and safe(p(h)) then status("Восстановление / перенос расходника"); return end
     if s.retreat or not safe(p(h)) then
+        status(s.retreat and "Отход: низкое здоровье" or "Отход: видимый противник")
         if s.camp then s.blocked[s.camp.key]=now+15 end
         s.camp=nil
         if s.home then for _,u in ipairs(units) do move(u,s.home,now) end end
@@ -317,7 +328,54 @@ function script.OnUpdate()
         end
     end
     s.camp=current
+    if current then s.scouting=nil end
+    if not current and scout:Get() then
+        -- No visible pack is not proof of an empty camp: approach it once to
+        -- gain vision. A confirmed empty camp is skipped until the next spawn.
+        local target
+        for _,camp in ipairs(camps) do
+            if s.scouting and camp.key==s.scouting.key then target=camp; break end
+        end
+        if target and (not safe(target.point)
+            or (s.blocked[target.key] or 0)>now) then target=nil end
+        if not target then
+            local score=math.huge
+            for _,camp in ipairs(camps) do
+                if #camp.creeps==0 and safe(camp.point)
+                    and dist(camp.point,s.anchor)<=routeRadius:Get()
+                    and (s.blocked[camp.key] or 0)<=now then
+                    local value=dist(p(h),camp.point)
+                    if value<score then target,score=camp,value end
+                end
+            end
+            s.scouting=target and {key=target.key,started=now} or nil
+        end
+        if target and s.scouting then
+            if dist(p(h),target.point)<200 then
+                s.scouting.arrived=s.scouting.arrived or now
+                if now-s.scouting.arrived>=1.5 then
+                    s.blocked[target.key]=nextSpawn
+                    s.scouting=nil
+                    status("Пустой лагерь: выбираю следующий")
+                    return
+                end
+            else s.scouting.arrived=nil end
+            -- Unreachable camps must not stall the entire route.
+            if now-s.scouting.started>25 then
+                s.blocked[target.key]=nextSpawn
+                s.scouting=nil
+                status("Не удалось подойти к лагерю: пропускаю")
+                return
+            end
+            status("Иду проверить лагерь и получить обзор")
+            for _,u in ipairs(units) do move(u,target.point,now) end
+            s.waiting=false
+            return
+        end
+        s.scouting=nil
+    end
     if not current then
+        status(#camps==0 and "API не вернул лагеря" or "Все доступные лагеря проверены: жду спавн")
         -- Wait outside spawn boxes so the hero/illusions do not block respawns.
         local function outside(point)
             for _,camp in ipairs(camps) do
@@ -356,6 +414,7 @@ function script.OnUpdate()
         s.waiting=true
         return
     end
+    status("Фарм живой пачки")
     s.waiting=false
     local list=current.creeps
     table.sort(list,function(a,b) return dist(p(h),p(a))<dist(p(h),p(b)) end)

@@ -50,7 +50,9 @@ IsCastable=function()return true end,CastTarget=function(i,u)
  calls[#calls+1]={kind='cast',item=i.name}; u.mods=u.mods or {}; u.mods[i.mod]=true end}
 Item={IsItemEnabled=function()return true end,GetCost=function(i)return i.cost or 100 end}
 """)
+lua.execute("Log={Write=function()end}")
 script=lua.execute(source)
+lua.execute("widgets['Проверять лагеря без обзора'].value=false")
 script.OnUpdate();assert len(lua.globals().calls)==0
 lua.execute("widgets['Включить'].value=true; widgets['Автофарм'].value=true")
 script.OnUpdate();assert lua.globals().calls[1]['kind']=='attack'
@@ -143,3 +145,20 @@ assert lua.globals().calls[1]['kind']=='move'
 point=lua.globals().calls[1]['point']
 assert not (16<=point['x']<=184 and -84<=point['y']<=84)
 print('PASS: leaves spawn box while waiting')
+
+script.OnGameEnd()
+lua.execute("""
+widgets['Проверять лагеря без обзора'].value=true
+now=600; calls={}; h.point=Vector(-500,0,0); n.hp=0; n2.hp=0
+""")
+script.OnUpdate(); assert lua.globals().calls[1]['kind']=='move'
+assert lua.globals().calls[1]['point']['x']==100
+lua.execute('now=602; h.point=Vector(100,0,0)')
+script.OnUpdate()
+lua.execute('now=604')
+script.OnUpdate()
+lua.execute('now=605')
+script.OnUpdate(); assert lua.globals().calls[len(lua.globals().calls)]['point']['x']==700
+lua.execute('now=607; n2.hp=100; NPC.IsVisible=function()return true end')
+script.OnUpdate(); assert lua.globals().calls[len(lua.globals().calls)]['target']==5
+print('PASS: scouts without vision, skips confirmed empty camp, attacks newly revealed pack')
