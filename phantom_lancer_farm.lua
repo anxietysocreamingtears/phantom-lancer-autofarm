@@ -234,6 +234,34 @@ function script.OnUpdate()
     for _,creep in ipairs(neutrals) do
         if dist(p(h),p(creep))<850 then regenSafe=false; break end
     end
+    local function stepAwayForRegen()
+        -- Find a nearby place outside neutral aggro range; mana recovery
+        -- must never use the fountain as its destination.
+        for radius=900,1800,300 do
+            for i=0,15 do
+                local angle=i*math.pi/8
+                local point=Vector(p(h).x+math.cos(angle)*radius,
+                    p(h).y+math.sin(angle)*radius,p(h).z)
+                local clear=safe(point)
+                for _,creep in ipairs(neutrals) do
+                    if dist(point,p(creep))<900 then clear=false; break end
+                end
+                if clear then
+                    status("Отхожу от крипов для расходника")
+                    move(h,point,now)
+                    s.regenMoving=true
+                    return true
+                end
+            end
+        end
+        status("Нет безопасной точки рядом для расходника")
+        return false
+    end
+    if regenSafe and s.regenMoving then
+        if act(h) then Player.HoldPosition(player,h,false,false,false,"pl_farm") end
+        s.orders[Entity.GetIndex(h)]=nil
+        s.regenMoving=nil
+    end
     local busy=false
     if autoRegen:Get() then
         busy=regen(h,player,now,hp,mana,regenSafe)
@@ -254,13 +282,12 @@ function script.OnUpdate()
     if autoRegen:Get() and not regenSafe and safe(p(h))
         and ((hp<50 and findItem(h,"item_flask"))
             or (mana<50 and findItem(h,"item_clarity"))) then
-        if s.home then move(h,s.home,now) end
-        return
+        if stepAwayForRegen() then return end
     end
     if NPC.HasModifier(h,"modifier_flask_healing")
         or NPC.HasModifier(h,"modifier_clarity_potion") then
         -- Let regeneration complete outside the camp; avoid spending mana meanwhile.
-        if not regenSafe and s.home then move(h,s.home,now) end
+        if not regenSafe then stepAwayForRegen() end
         return
     end
     if not act(h) or now<s.castUntil then return end

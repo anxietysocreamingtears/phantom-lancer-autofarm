@@ -162,3 +162,31 @@ script.OnUpdate(); assert lua.globals().calls[len(lua.globals().calls)]['point']
 lua.execute('now=607; n2.hp=100; NPC.IsVisible=function()return true end')
 script.OnUpdate(); assert lua.globals().calls[len(lua.globals().calls)]['target']==5
 print('PASS: scouts without vision, skips confirmed empty camp, attacks newly revealed pack')
+
+# Low mana with Clarity uses a local safe point, never the fountain.
+script.OnGameEnd()
+lua.execute("""
+now=700; calls={}; h.hp=100; h.point=Vector(0,0,0); h.mods={}
+h.items={[0]={name='item_clarity',id=55,mod='modifier_clarity_potion'}}
+n.hp=100; n.point=Vector(100,0,0); n2.hp=0; heroList={h}
+NPC.GetMana=function()return 20 end
+""")
+script.OnUpdate()
+call=lua.globals().calls[len(lua.globals().calls)]
+assert call['kind']=='move'
+point=call['point']
+assert not (point['x']==-1000 and point['y']==0)
+assert ((point['x']-100)**2+point['y']**2)**0.5>=900
+lua.globals().h['point']=point
+lua.execute('now=702')
+script.OnUpdate()
+assert lua.globals().calls[len(lua.globals().calls)]['kind']=='cast'
+assert lua.globals().h['mods']['modifier_clarity_potion']
+# Already active Clarity also moves locally if neutrals approach.
+script.OnGameEnd()
+lua.execute('now=705; calls={}; h.point=Vector(0,0,0)')
+script.OnUpdate()
+call=lua.globals().calls[len(lua.globals().calls)]
+assert call['kind']=='move'
+assert not (call['point']['x']==-1000 and call['point']['y']==0)
+print('PASS: low mana and active Clarity retreat locally, then self-cast outside camp')
