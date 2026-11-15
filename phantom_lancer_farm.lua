@@ -254,60 +254,111 @@ function script.OnUpdate()
         return
     end
     if not act(h) or now<s.castUntil then return end
-    local function at(point)
-        local list={}
-        for _,u in ipairs(neutrals) do
-            if dist(p(u),point)<800 then list[#list+1]=u end
+    -- Assign each visible living neutral to exactly one camp. An 800-radius
+    -- scan used to count the same pack for neighbouring camps.
+    local camps={}
+    for _,handle in ipairs(Camps.GetAll() or {}) do
+        local point=center(handle)
+        local box=Camp.GetCampBox(handle)
+        if point and box and box.min and box.max then
+            local k=string.format("%.0f:%.0f",point.x,point.y)
+            camps[#camps+1]={point=point,key=k,box=box,creeps={}}
         end
-        return list
     end
-    local nextSpawn=(math.floor(now/60)+1)*60+1
-    if s.camp and not safe(s.camp.point) then
-        s.blocked[s.camp.key]=now+15
-        s.camp=nil
+    for _,creep in ipairs(neutrals) do
+        local cp=p(creep)
+        local best,bestScore
+        for _,camp in ipairs(camps) do
+            local box=camp.box
+            local dx=math.max(box.min.x-cp.x,0,cp.x-box.max.x)
+            local dy=math.max(box.min.y-cp.y,0,cp.y-box.max.y)
+            local score=dx*dx+dy*dy
+            local tie=dist(cp,camp.point)
+            if tie<1000 and (not bestScore or score<bestScore
+                or (score==bestScore and tie<dist(cp,best.point))) then
+                best,bestScore=camp,score
+            end
+        end
+        if best then best.creeps[#best.creeps+1]=creep end
     end
-    if not s.camp then
+    local dotaTime=GameRules.GetDOTATime()
+    local nextSpawn=now+(60-dotaTime%60)+1
+    local current
+    if s.camp then
+        for _,camp in ipairs(camps) do
+            if camp.key==s.camp.key then current=camp; break end
+        end
+        if not current or #current.creeps==0 then
+            -- A cleared pack cannot be selected again before the next spawn.
+            -- Hidden packs are also skipped until they become visible again.
+            s.blocked[s.camp.key]=nextSpawn
+            current=nil
+        elseif not safe(current.point) then
+            s.blocked[current.key]=now+15
+            current=nil
+        end
+    end
+    local function allowed(camp)
+        if #camp.creeps==0 or not safe(camp.point)
+            or dist(camp.point,s.anchor)>routeRadius:Get()
+            or (s.blocked[camp.key] or 0)>now then return false end
+        for _,creep in ipairs(camp.creeps) do
+            if NPC.IsAncient(creep) and not ancients:Get() then return false end
+        end
+        return true
+    end
+    if current and not allowed(current) then current=nil end
+    if not current then
         local bestScore=math.huge
-        for _,c in ipairs(Camps.GetAll() or {}) do
-            local point=center(c)
-            if point and dist(point,s.anchor)<=routeRadius:Get() and safe(point) then
-                local k=string.format("%.0f:%.0f",point.x,point.y)
-                if (s.blocked[k] or 0)<=now then
-                    local list, allowed=at(point),true
-                    for _,u in ipairs(list) do
-                        if NPC.IsAncient(u) and not ancients:Get() then allowed=false end
-                    end
-                    if not allowed then s.blocked[k]=nextSpawn
-                    else
-                        local score=dist(p(h),point)+(#list==0 and 1000 or 0)
-                        if score<bestScore then
-                            s.camp={point=point,key=k}
-                            bestScore=score
-                        end
-                    end
-                end
+        for _,camp in ipairs(camps) do
+            if allowed(camp) then
+                local score=dist(p(h),camp.point)
+                if score<bestScore then current,bestScore=camp,score end
             end
         end
     end
-    local c=s.camp
-    if not c then return end
-    local list=at(c.point)
-    for _,u in ipairs(list) do
-        if NPC.IsAncient(u) and not ancients:Get() then
-            s.blocked[c.key]=nextSpawn
-            s.camp=nil
-            return
+    s.camp=current
+    if not current then
+        -- Wait outside spawn boxes so the hero/illusions do not block respawns.
+        local function outside(point)
+            for _,camp in ipairs(camps) do
+                local box=camp.box
+                if point.x>=box.min.x-64 and point.x<=box.max.x+64
+                    and point.y>=box.min.y-64 and point.y<=box.max.y+64 then
+                    return false
+                end
+            end
+            return true
         end
-    end
-    if #list==0 then
-        if dist(p(h),c.point)<250 then
-            c.arrived=c.arrived or now
-            if now-c.arrived>=1 then s.blocked[c.key]=nextSpawn; s.camp=nil; return end
-        else c.arrived=nil end
-        for _,u in ipairs(units) do move(u,c.point,now) end
+        local waitingPoint=p(h)
+        if not outside(waitingPoint) then
+            waitingPoint=nil
+            for radius=400,1200,400 do
+                for i=0,7 do
+                    local angle=i*math.pi/4
+                    local candidate=Vector(p(h).x+math.cos(angle)*radius,
+                        p(h).y+math.sin(angle)*radius,p(h).z)
+                    if outside(candidate) and safe(candidate) then
+                        waitingPoint=candidate
+                        break
+                    end
+                end
+                if waitingPoint then break end
+            end
+        end
+        for _,u in ipairs(units) do
+            if waitingPoint and (not outside(p(u)) or dist(p(u),waitingPoint)>200) then
+                move(u,waitingPoint,now)
+            elseif not s.waiting and act(u) then
+                Player.HoldPosition(player,u,false,false,false,"pl_farm")
+                s.orders[Entity.GetIndex(u)]=nil
+            end
+        end
+        s.waiting=true
         return
     end
-    c.arrived=nil
+    s.waiting=false
+    local list=current.creeps
     table.sort(list,function(a,b) return dist(p(h),p(a))<dist(p(h),p(b)) end)
     local target=list[1]
     for i=2,#units do attack(player,units[i],target,now) end

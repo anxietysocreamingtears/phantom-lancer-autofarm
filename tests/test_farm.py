@@ -30,8 +30,8 @@ IsIllusion=function()return false end,IsNeutral=function(u)return u.neutral end,
 IsWaitingToSpawn=function()return false end,IsAncient=function()return false end,
 IsAttacking=function()return false end,GetAbility=function()return nil end,
 MoveTo=function(u,point) calls[#calls+1]={kind='move',point=point} end}
-Player={GetPlayerID=function()return 0 end,AttackTarget=function()calls[#calls+1]={kind='attack'} end}
-GameRules={IsPaused=function()return false end,GetGameTime=function()return now end}
+Player={GetPlayerID=function()return 0 end,AttackTarget=function(player,u,target)calls[#calls+1]={kind='attack',target=target.id} end,HoldPosition=function()calls[#calls+1]={kind='hold'}end}
+GameRules={IsPaused=function()return false end,GetGameTime=function()return now end,GetDOTATime=function()return now end}
 Camps={GetAll=function()return {1}end}
 Camp={GetCampBox=function()return {min=Vector(50,-50,0),max=Vector(150,50,0)}end}
 ''')
@@ -108,3 +108,38 @@ script.OnUpdate(); assert lua.globals().h['mods']['modifier_flask_healing']
 lua.execute('now=408')
 script.OnUpdate(); assert lua.globals().h['items'][0]['id']==20
 print('PASS: 50% threshold, independent purchases, modifier guard, backpack delay, self-cast and restore')
+
+script.OnGameEnd()
+lua.execute("""
+now=500; calls={}; h.hp=100; h.mods={}; h.items={}; h.point=Vector(0,0,0)
+NPC.GetMana=function()return 100 end
+n.hp=100; n.point=Vector(100,0,0)
+n2={name='neutral',team=4,id=5,hp=100,point=Vector(700,0,0),neutral=true}
+npcList={h,n,n2,f}; heroList={h}
+Camps.GetAll=function()return {1,2}end
+Camp.GetCampBox=function(c)
+ local x=c==1 and 100 or 700
+ return {min=Vector(x-20,-20,0),max=Vector(x+20,20,0)}
+end
+""")
+script.OnUpdate(); assert lua.globals().calls[1]['target']==2
+lua.execute('now=502; n.hp=0')
+script.OnUpdate(); assert lua.globals().calls[len(lua.globals().calls)]['target']==5
+lua.execute('now=504; n2.hp=0')
+script.OnUpdate(); assert lua.globals().calls[len(lua.globals().calls)]['kind']=='hold'
+count=len(lua.globals().calls)
+lua.execute('now=506')
+script.OnUpdate(); assert len(lua.globals().calls)==count
+lua.execute('now=541; n.hp=100')
+script.OnUpdate(); assert lua.globals().calls[len(lua.globals().calls)]['target']==2
+script.OnGameEnd()
+lua.execute("now=550; calls={}; n2.hp=100; NPC.IsVisible=function(u)return u~=n end")
+script.OnUpdate(); assert lua.globals().calls[1]['target']==5
+print('PASS: unique camp assignment, dead/empty pack rejection, next camp, idle without packs, respawn and fog')
+script.OnGameEnd()
+lua.execute('now=560; calls={}; n.hp=0; n2.hp=0; h.point=Vector(100,0,0)')
+script.OnUpdate()
+assert lua.globals().calls[1]['kind']=='move'
+point=lua.globals().calls[1]['point']
+assert not (16<=point['x']<=184 and -84<=point['y']<=84)
+print('PASS: leaves spawn box while waiting')
