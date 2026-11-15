@@ -9,7 +9,7 @@ local useIllusions = g:Switch("Управлять иллюзиями", true)
 local useLance = g:Switch("Spirit Lance: только для плотной цели", false)
 local minHP = g:Slider("Отход при HP, %", 10, 70, 35)
 local dangerRadius = g:Slider("Радиус опасности", 600, 2500, 1400)
-local routeRadius = g:Slider("Радиус от точки запуска", 1500, 10000, 5000)
+local routeRadius = g:Slider("Максимальный переход к кемпу", 600, 3000, 1800)
 local ancients = g:Switch("Древние", false)
 local scout = g:Switch("Проверять лагеря без обзора", true)
 local debug = g:Switch("Причина ожидания в консоли", true)
@@ -200,7 +200,6 @@ function script.OnUpdate()
         if s.swap then restore(h,now) else reset() end
         return
     end
-    s.anchor = s.anchor or p(h)
     local foes, neutrals, units = {}, {}, {h}
     for _,e in ipairs(Heroes.GetAll() or {}) do
         if live(e) and NPC.IsVisible(e) and not NPC.IsIllusion(e)
@@ -337,7 +336,7 @@ function script.OnUpdate()
     end
     local function allowed(camp)
         if #camp.creeps==0 or not safe(camp.point)
-            or dist(camp.point,s.anchor)>routeRadius:Get()
+            or dist(camp.point,p(h))>routeRadius:Get()
             or (s.blocked[camp.key] or 0)>now then return false end
         for _,creep in ipairs(camp.creeps) do
             if NPC.IsAncient(creep) and not ancients:Get() then return false end
@@ -354,6 +353,28 @@ function script.OnUpdate()
             end
         end
     end
+    -- Do not prefer a distant visible pack over an unexplored nearby camp.
+    -- Keep fighting the current pack once the hero has reached it.
+    if current and dist(p(h),current.point)>650 then
+        local currentDistance=dist(p(h),current.point)
+        for _,camp in ipairs(camps) do
+            if allowed(camp) and dist(p(h),camp.point)+200<currentDistance then
+                current=camp
+                currentDistance=dist(p(h),camp.point)
+            end
+        end
+        if scout:Get() then
+            for _,camp in ipairs(camps) do
+                local d=dist(p(h),camp.point)
+                if #camp.creeps==0 and safe(camp.point)
+                    and (s.blocked[camp.key] or 0)<=now
+                    and d<=routeRadius:Get() and d+200<currentDistance then
+                    current=nil
+                    break
+                end
+            end
+        end
+    end
     s.camp=current
     if current then s.scouting=nil end
     if not current and scout:Get() then
@@ -364,12 +385,23 @@ function script.OnUpdate()
             if s.scouting and camp.key==s.scouting.key then target=camp; break end
         end
         if target and (not safe(target.point)
-            or (s.blocked[target.key] or 0)>now) then target=nil end
+            or dist(p(h),target.point)>routeRadius:Get()
+            or (s.blocked[target.key] or 0)>now) then target=nil; s.scouting=nil end
+        -- Reconsider the destination if a materially closer unvisited camp exists.
+        if target then
+            for _,camp in ipairs(camps) do
+                if #camp.creeps==0 and safe(camp.point)
+                    and (s.blocked[camp.key] or 0)<=now
+                    and dist(p(h),camp.point)+200<dist(p(h),target.point) then
+                    target=nil; s.scouting=nil; break
+                end
+            end
+        end
         if not target then
             local score=math.huge
             for _,camp in ipairs(camps) do
                 if #camp.creeps==0 and safe(camp.point)
-                    and dist(camp.point,s.anchor)<=routeRadius:Get()
+                    and dist(camp.point,p(h))<=routeRadius:Get()
                     and (s.blocked[camp.key] or 0)<=now then
                     local value=dist(p(h),camp.point)
                     if value<score then target,score=camp,value end

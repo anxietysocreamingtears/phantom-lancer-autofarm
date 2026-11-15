@@ -190,3 +190,23 @@ call=lua.globals().calls[len(lua.globals().calls)]
 assert call['kind']=='move'
 assert not (call['point']['x']==-1000 and call['point']['y']==0)
 print('PASS: low mana and active Clarity retreat locally, then self-cast outside camp')
+
+# Nearby unknown camp must beat a far visible camp; out-of-range packs are ignored.
+script.OnGameEnd()
+lua.execute("""
+now=800; calls={}; h.hp=100; h.mods={}; h.items={}; h.point=Vector(0,0,0)
+NPC.GetMana=function()return 100 end
+n.hp=0; n2.hp=100; n2.point=Vector(1400,0,0)
+Camp.GetCampBox=function(c)
+ local x=c==1 and 300 or 1400
+ return {min=Vector(x-20,-20,0),max=Vector(x+20,20,0)}
+end
+""")
+script.OnUpdate()
+assert lua.globals().calls[1]['kind']=='move'
+assert lua.globals().calls[1]['point']['x']==300
+script.OnGameEnd()
+lua.execute("now=810; calls={}; Camps.GetAll=function()return {2}end; n2.point=Vector(4500,0,0); Camp.GetCampBox=function()return {min=Vector(4480,-20,0),max=Vector(4520,20,0)}end")
+script.OnUpdate()
+assert lua.globals().calls[1]['kind']=='hold'
+print('PASS: nearby unseen camp beats distant visible pack; no cross-map travel outside local limit')
